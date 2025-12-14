@@ -1,5 +1,5 @@
 # Make the Python version into a variable so that it may be updated easily if / when needed.
-ARG pythonVersion=3.10
+ARG pythonVersion=3.9
 
 # Builder stage: install build deps and Python wheels once
 FROM python:${pythonVersion}-slim AS builder
