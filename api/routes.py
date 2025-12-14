@@ -2,7 +2,10 @@ from ariadne import graphql_sync
 from ariadne.contrib.tracing.apollotracing import ApolloTracingExtensionSync
 from ariadne.explorer import ExplorerGraphiQL
 from flask import current_app, jsonify, request
+from sqlalchemy import text
 import os
+from api.cache import redis_healthcheck
+from api.extensions import db
 from .context import get_user_context
 from .main import bp
 from .schema import schema
@@ -54,4 +57,21 @@ def graphql_server():
 @bp.route('/healthcheck')
 def healthcheck():
     status_code = 200
-    return jsonify({'status': status_code}), status_code
+    payload = {'status': 'ok'}
+
+    try:
+        db.session.execute(text('SELECT 1'))
+        payload['db'] = 'ok'
+    except Exception as exc:
+        payload['db'] = 'error'
+        payload['db_error'] = str(exc)
+        status_code = 500
+
+    redis_client = current_app.extensions.get('redis_client')
+    if redis_client and redis_healthcheck(redis_client):
+        payload['cache'] = 'ok'
+    else:
+        payload['cache'] = 'error'
+        status_code = 500
+
+    return jsonify(payload), status_code

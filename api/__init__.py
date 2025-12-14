@@ -4,6 +4,7 @@ from flask import Flask, request
 from flask_cors import CORS
 from config import get_config
 from .extensions import db, logs, migrate
+from .cache import init_redis
 
 
 def create_app(test=False):
@@ -15,6 +16,7 @@ def create_app(test=False):
     CORS(app, resources={r"/api/*": {"origins": "*"}, r"/graphiql": {"origins": "*"}})
 
     register_extensions(app)
+    init_redis(app)
 
     # Blueprint registration here.
     from .main import bp as main_bp

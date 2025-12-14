@@ -4,6 +4,8 @@
 
 A GraphQL API that serves data from a PostgreSQL Database. This is built in Python with Flask and Ariadne and developed and deployed in Docker.
 
+For the lab final deliverables through Kubernetes (Step 5), see [LAB_FINAL_STEPS.md](LAB_FINAL_STEPS.md).
+
 ## Status
 
 ### Staging
