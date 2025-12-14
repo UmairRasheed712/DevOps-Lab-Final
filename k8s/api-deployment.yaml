@@ -1,8 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api
-  namespace: dev
+  name: api-deployment
+  namespace: devops-final
 spec:
   replicas: 2
   selector:
@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: api
-          image: docker.io/umairrasheed7112/devops-lab-final-api:latest
-          imagePullPolicy: IfNotPresent
+          image: ${ECR_REGISTRY}/devops-final-api:${IMAGE_TAG:-latest}
+          imagePullPolicy: Always
           env:
             - name: FLASK_ENV
               valueFrom:

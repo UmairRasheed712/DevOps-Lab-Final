@@ -1,0 +1,441 @@
+name: CI/CD Pipeline - DevOps Final Lab
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  TERRAFORM_VERSION: '1.5.0'
+  AWS_REGION: 'us-east-1'
+  EKS_CLUSTER_NAME: 'devops-final-eks'
+  DOCKER_IMAGE_NAME: 'devops-final-api'
+
+jobs:
+  # Stage 1: Build & Test
+  build-and-test:
+    name: Build & Test Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/ -v --cov=api --cov-report=xml --cov-report=html --cov-report=term
+        continue-on-error: false
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Archive test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            htmlcov/
+            coverage.xml
+          retention-days: 30
+
+  # Stage 2: Security & Linting
+  security-and-linting:
+    name: Security Scanning & Code Quality
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install linting tools
+        run: |
+          pip install flake8 pylint black isort bandit safety
+
+      - name: Run Black (Code Formatting Check)
+        run: |
+          black --check --diff api/ tests/
+        continue-on-error: true
+
+      - name: Run isort (Import Sorting Check)
+        run: |
+          isort --check-only --diff api/ tests/
+        continue-on-error: true
+
+      - name: Run Flake8 (Linting)
+        run: |
+          flake8 api/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 api/ tests/ --count --max-complexity=10 --max-line-length=127 --statistics
+        continue-on-error: true
+
+      - name: Run Pylint (Code Quality)
+        run: |
+          pylint api/ --exit-zero
+        continue-on-error: true
+
+      - name: Run Bandit (Security Scanning)
+        run: |
+          bandit -r api/ -f json -o bandit-report.json
+          bandit -r api/ -f screen
+        continue-on-error: true
+
+      - name: Check dependencies for vulnerabilities
+        run: |
+          safety check --json --output safety-report.json || true
+          safety check || true
+        continue-on-error: true
+
+      - name: Run Trivy vulnerability scanner (Filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+            trivy-results.sarif
+          retention-days: 30
+
+  # Stage 3: Docker Build & Push
+  docker-build-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [build-and-test, security-and-linting]
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create ECR repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names ${{ env.DOCKER_IMAGE_NAME }} || \
+          aws ecr create-repository --repository-name ${{ env.DOCKER_IMAGE_NAME }} \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.DOCKER_IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+
+      - name: Run Trivy vulnerability scanner on image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.DOCKER_IMAGE_NAME }}:latest
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy image scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+
+  # Stage 4: Terraform Infrastructure Provisioning
+  terraform-apply:
+    name: Provision Infrastructure with Terraform
+    runs-on: ubuntu-latest
+    needs: docker-build-push
+    defaults:
+      run:
+        working-directory: ./infra
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          terraform apply -auto-approve tfplan
+
+      - name: Save Terraform Outputs
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        id: tf-outputs
+        run: |
+          echo "eks_cluster_name=$(terraform output -raw eks_cluster_name)" >> $GITHUB_OUTPUT
+          echo "rds_endpoint=$(terraform output -raw rds_endpoint)" >> $GITHUB_OUTPUT
+          echo "vpc_id=$(terraform output -raw vpc_id)" >> $GITHUB_OUTPUT
+
+  # Stage 5: Deploy to Kubernetes
+  deploy-to-kubernetes:
+    name: Deploy Application to EKS
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Create Kubernetes namespace
+        run: |
+          kubectl create namespace devops-final || true
+
+      - name: Create Kubernetes secrets
+        run: |
+          kubectl create secret generic app-secrets \
+            --from-literal=db-password=${{ secrets.DB_PASSWORD }} \
+            --from-literal=jwt-secret=${{ secrets.JWT_SECRET }} \
+            --namespace=devops-final \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Update image tag in Kubernetes manifests
+        run: |
+          export IMAGE_TAG=${{ github.sha }}
+          export ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          envsubst < k8s/api-deployment.yaml > k8s/api-deployment-updated.yaml
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f k8s/configmap.yaml -n devops-final
+          kubectl apply -f k8s/secret.yaml -n devops-final
+          kubectl apply -f k8s/postgres.yaml -n devops-final
+          kubectl apply -f k8s/redis.yaml -n devops-final
+          kubectl apply -f k8s/api-deployment-updated.yaml -n devops-final
+          kubectl apply -f k8s/api-service.yaml -n devops-final
+
+      - name: Wait for deployment rollout
+        run: |
+          kubectl rollout status deployment/api-deployment -n devops-final --timeout=5m
+
+      - name: Get deployment status
+        run: |
+          kubectl get all -n devops-final
+          kubectl get ingress -n devops-final || true
+
+  # Stage 6: Post-Deploy Smoke Tests
+  smoke-tests:
+    name: Post-Deployment Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy-to-kubernetes
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: |
+          pip install requests pytest
+
+      - name: Wait for service to be ready
+        run: |
+          kubectl wait --for=condition=ready pod \
+            -l app=api \
+            -n devops-final \
+            --timeout=300s
+
+      - name: Get service endpoint
+        id: endpoint
+        run: |
+          SERVICE_URL=$(kubectl get svc api-service -n devops-final -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          if [ -z "$SERVICE_URL" ]; then
+            SERVICE_URL=$(kubectl get svc api-service -n devops-final -o jsonpath='{.spec.clusterIP}')
+            echo "endpoint=http://${SERVICE_URL}:5000" >> $GITHUB_OUTPUT
+          else
+            echo "endpoint=http://${SERVICE_URL}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run smoke tests
+        run: |
+          chmod +x ./scripts/smoke-tests.sh
+          ./scripts/smoke-tests.sh ${{ steps.endpoint.outputs.endpoint }}
+
+      - name: Health check
+        run: |
+          ENDPOINT=${{ steps.endpoint.outputs.endpoint }}
+          echo "Testing endpoint: $ENDPOINT"
+
+          # Health check
+          curl -f "${ENDPOINT}/health" || exit 1
+
+          # GraphQL endpoint check
+          curl -f "${ENDPOINT}/graphql" -H "Content-Type: application/json" \
+            -d '{"query":"{ __schema { queryType { name } } }"}' || exit 1
+
+      - name: Performance test
+        run: |
+          ENDPOINT=${{ steps.endpoint.outputs.endpoint }}
+
+          # Simple load test
+          for i in {1..10}; do
+            curl -s "${ENDPOINT}/health" > /dev/null
+            echo "Request $i completed"
+          done
+
+      - name: Get pod logs
+        if: always()
+        run: |
+          kubectl logs -l app=api -n devops-final --tail=100 || true
+
+      - name: Describe failing pods
+        if: failure()
+        run: |
+          kubectl describe pods -n devops-final || true
+
+  # Notification Job
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [build-and-test, security-and-linting, docker-build-push, terraform-apply, deploy-to-kubernetes, smoke-tests]
+    if: always()
+
+    steps:
+      - name: Send success notification
+        if: ${{ needs.smoke-tests.result == 'success' }}
+        run: |
+          echo "🎉 Pipeline completed successfully!"
+          echo "All stages passed: Build ✅ Security ✅ Docker ✅ Terraform ✅ Deploy ✅ Tests ✅"
+
+      - name: Send failure notification
+        if: ${{ contains(needs.*.result, 'failure') }}
+        run: |
+          echo "❌ Pipeline failed!"
+          echo "Please check the failed stages and fix the issues."
+          exit 1
