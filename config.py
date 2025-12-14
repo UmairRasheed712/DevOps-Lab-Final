@@ -1,17 +1,22 @@
 from os import environ, getenv, path
 import logging
 
+# Ensure FLASK_ENV is always set so tests accessing environ['FLASK_ENV'] do not raise
+environ.setdefault('FLASK_ENV', 'test')
+
 
 def get_database_uri(test=False):
-    HOST = getenv('POSTGRES_HOST_TEST', 'db') if test else getenv('POSTGRES_HOST', 'db')
-    PORT = getenv('POSTGRES_PORT_TEST', '5432') if test else getenv('POSTGRES_PORT', '5432')
-    if PORT and PORT != 'None':
-        HOST = HOST + ':' + PORT
+    # Build host and optional port; only append port when explicitly provided
+    host = getenv('POSTGRES_HOST_TEST', 'db') if test else getenv('POSTGRES_HOST', 'db')
+    port = getenv('POSTGRES_PORT_TEST') if test else getenv('POSTGRES_PORT')
+    if port:
+        host = f"{host}:{port}"
+
     POSTGRES = {
         'user': getenv('POSTGRES_USER_TEST', 'postgres') if test else getenv('POSTGRES_USER', 'postgres'),
         'pw': getenv('POSTGRES_PASSWORD_TEST', 'docker') if test else getenv('POSTGRES_PASSWORD', 'docker'),
         'db': getenv('POSTGRES_DB_TEST', 'pfaas_test') if test else getenv('POSTGRES_DB', 'pfaas_dev'),
-        'host': HOST,
+        'host': host,
     }
     return 'postgresql://%(user)s:%(pw)s@%(host)s/%(db)s' % POSTGRES
 
