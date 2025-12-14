@@ -196,10 +196,18 @@ jobs:
 
       - name: Create ECR repository if not exists
         run: |
-          aws ecr describe-repositories --repository-names ${{ env.DOCKER_IMAGE_NAME }} || \
-          aws ecr create-repository --repository-name ${{ env.DOCKER_IMAGE_NAME }} \
-            --image-scanning-configuration scanOnPush=true \
-            --encryption-configuration encryptionType=AES256
+          echo "Checking if ECR repository exists..."
+          if ! aws ecr describe-repositories --repository-names ${{ env.DOCKER_IMAGE_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "Creating ECR repository: ${{ env.DOCKER_IMAGE_NAME }}"
+            aws ecr create-repository \
+              --repository-name ${{ env.DOCKER_IMAGE_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+          else
+            echo "ECR repository already exists"
+          fi
+          echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
 
       - name: Extract metadata for Docker
         id: meta
@@ -213,6 +221,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
+        id: docker-build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -222,9 +231,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          provenance: false
           build-args: |
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             VCS_REF=${{ github.sha }}
+
+      - name: Verify image was pushed
+        run: |
+          echo "Verifying image in ECR..."
+          aws ecr describe-images \
+            --repository-name ${{ env.DOCKER_IMAGE_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --image-ids imageTag=latest || echo "Warning: Could not verify image"
 
       - name: Run Trivy vulnerability scanner on image
         uses: aquasecurity/trivy-action@master
