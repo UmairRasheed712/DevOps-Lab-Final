@@ -1,5 +1,8 @@
+data "aws_availability_zones" "available" {}
+
 locals {
   name = var.project_name
+  azs  = slice(data.aws_availability_zones.available.names, 0, 2)
 }
 
 module "vpc" {
@@ -9,9 +12,9 @@ module "vpc" {
   name = "${local.name}-vpc"
   cidr = var.vpc_cidr
 
-  azs             = var.azs
-  public_subnets  = [for i in range(length(var.azs)) : cidrsubnet(var.vpc_cidr, 4, i)]
-  private_subnets = [for i in range(length(var.azs)) : cidrsubnet(var.vpc_cidr, 4, i + length(var.azs))]
+  azs             = local.azs
+  public_subnets  = [for i in range(length(local.azs)) : cidrsubnet(var.vpc_cidr, 4, i)]
+  private_subnets = [for i in range(length(local.azs)) : cidrsubnet(var.vpc_cidr, 4, i + length(local.azs))]
 
   enable_nat_gateway = true
   single_nat_gateway = true
