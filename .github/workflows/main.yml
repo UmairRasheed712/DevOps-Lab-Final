@@ -13,6 +13,7 @@ env:
   AWS_REGION: 'us-east-1'
   EKS_CLUSTER_NAME: 'devops-final-eks'
   DOCKER_IMAGE_NAME: 'devops-final-api'
+  FRONTEND_IMAGE_NAME: 'devops-final-frontend'
   ENABLE_CODE_SCANNING_UPLOAD: 'false'
 
 permissions:
@@ -267,6 +268,46 @@ jobs:
         with:
           sarif_file: 'trivy-image-results.sarif'
 
+      # --- Frontend Build Steps ---
+      - name: Create ECR repository for Frontend if not exists
+        run: |
+          echo "Checking if ECR repository exists..."
+          if ! aws ecr describe-repositories --repository-names ${{ env.FRONTEND_IMAGE_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "Creating ECR repository: ${{ env.FRONTEND_IMAGE_NAME }}"
+            aws ecr create-repository \
+              --repository-name ${{ env.FRONTEND_IMAGE_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+          else
+            echo "ECR repository already exists"
+          fi
+
+      - name: Extract metadata for Frontend Docker
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.FRONTEND_IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Frontend Docker image
+        id: docker-build-frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          provenance: false
+
   # Stage 4: Terraform Infrastructure Provisioning
   terraform-apply:
     name: Provision Infrastructure with Terraform
@@ -275,6 +316,10 @@ jobs:
     defaults:
       run:
         working-directory: ./infra
+    outputs:
+      eks_cluster_name: ${{ steps.tf-outputs.outputs.eks_cluster_name }}
+      rds_endpoint: ${{ steps.tf-outputs.outputs.rds_endpoint }}
+      vpc_id: ${{ steps.tf-outputs.outputs.vpc_id }}
 
     steps:
       - name: Checkout code
@@ -346,7 +391,7 @@ jobs:
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
-            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --name ${{ needs.terraform-apply.outputs.eks_cluster_name }} \
             --region ${{ env.AWS_REGION }}
 
       - name: Install kubectl
@@ -371,6 +416,7 @@ jobs:
           export IMAGE_TAG=${{ github.sha }}
           export ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
           envsubst < k8s/api-deployment.yaml > k8s/api-deployment-updated.yaml
+          envsubst < k8s/frontend-deployment.yaml > k8s/frontend-deployment-updated.yaml
 
       - name: Deploy to Kubernetes
         run: |
@@ -379,6 +425,16 @@ jobs:
           kubectl apply -f k8s/redis.yaml -n devops-final
           kubectl apply -f k8s/api-deployment-updated.yaml -n devops-final
           kubectl apply -f k8s/api-service.yaml -n devops-final
+          kubectl apply -f k8s/frontend-deployment-updated.yaml -n devops-final
+          kubectl apply -f k8s/frontend-service.yaml -n devops-final
+          
+          # Monitoring Stack
+          kubectl apply -f k8s/monitoring/prometheus-config.yaml -n devops-final
+          kubectl apply -f k8s/monitoring/node-exporter.yaml -n devops-final
+          kubectl apply -f k8s/monitoring/prometheus-deployment.yaml -n devops-final
+          kubectl apply -f k8s/monitoring/prometheus-service.yaml -n devops-final
+          kubectl apply -f k8s/monitoring/grafana-deployment.yaml -n devops-final
+          kubectl apply -f k8s/monitoring/grafana-service.yaml -n devops-final
 
       - name: Wait for deployment rollout
         run: |
