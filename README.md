@@ -6,6 +6,9 @@ A GraphQL API that serves data from a PostgreSQL Database. This is built in Pyth
 
 For the lab final deliverables through Kubernetes (Step 5), see [LAB_FINAL_STEPS.md](LAB_FINAL_STEPS.md).
 
+## CI/CD Status
+The CI/CD pipeline is configured to deploy to AWS EKS using AWS ECR for image storage.
+
 ## Status
 
 ### Staging
