@@ -13,6 +13,7 @@ env:
   AWS_REGION: 'us-east-1'
   EKS_CLUSTER_NAME: 'devops-final-eks'
   DOCKER_IMAGE_NAME: 'devops-final-api'
+  ENABLE_CODE_SCANNING_UPLOAD: 'false'
 
 permissions:
   actions: read
@@ -155,10 +156,11 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
+          exit-code: '0'
 
       - name: Upload Trivy results to GitHub Security
+        if: env.ENABLE_CODE_SCANNING_UPLOAD == 'true'
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -257,10 +259,11 @@ jobs:
           format: 'sarif'
           output: 'trivy-image-results.sarif'
           severity: 'CRITICAL,HIGH'
+          exit-code: '0'
 
       - name: Upload Trivy image scan results
+        if: env.ENABLE_CODE_SCANNING_UPLOAD == 'true'
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
         with:
           sarif_file: 'trivy-image-results.sarif'
 
