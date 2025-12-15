@@ -1,7 +1,13 @@
 data "aws_availability_zones" "available" {}
 
+resource "random_string" "suffix" {
+  length  = 8
+  special = false
+  upper   = false
+}
+
 locals {
-  name = var.project_name
+  name = "${var.project_name}-${random_string.suffix.result}"
   azs  = slice(data.aws_availability_zones.available.names, 0, 2)
 }
 
