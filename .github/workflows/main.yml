@@ -388,7 +388,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Update kubeconfig
+      - name: Manual Kubeconfig Setup
         run: |
           CLUSTER_NAME="${{ needs.terraform-apply.outputs.eks_cluster_name }}"
           if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" == "devops-final-eks" ]; then
@@ -396,26 +396,28 @@ jobs:
             CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?starts_with(@, 'devops-final-') && ends_with(@, '-eks')] | [0]" --output text)
           fi
           echo "Using EKS Cluster: $CLUSTER_NAME"
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --alias $CLUSTER_NAME
+          
+          # Retrieve Cluster Info
+          ENDPOINT=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text)
+          CA_DATA=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query "cluster.certificateAuthority.data" --output text)
+          
+          # Generate Token
+          TOKEN=$(aws eks get-token --cluster-name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --output json | jq -r '.status.token')
+          
+          # Configure Kubectl
+          echo $CA_DATA | base64 -d > ca.crt
+          kubectl config set-cluster $CLUSTER_NAME --server=$ENDPOINT --certificate-authority=ca.crt --embed-certs=true
+          kubectl config set-credentials deploy-user --token=$TOKEN
+          kubectl config set-context $CLUSTER_NAME --cluster=$CLUSTER_NAME --user=deploy-user
           kubectl config use-context $CLUSTER_NAME
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v3
         with:
-          version: 'v1.29.2' # Pin to match EKS version
-
-      - name: Check AWS CLI Version
-        run: aws --version
+          version: 'v1.29.2'
 
       - name: Verify Cluster Access
         run: |
-          echo "Verifying AWS Identity..."
-          aws sts get-caller-identity
-          
-          echo "Verifying Kubeconfig..."
-          kubectl config view --minify
-          
-          echo "Testing Cluster Access..."
           kubectl get svc --all-namespaces
 
       - name: Create Kubernetes namespace
@@ -514,7 +516,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Update kubeconfig
+      - name: Manual Kubeconfig Setup
         run: |
           CLUSTER_NAME="${{ needs.terraform-apply.outputs.eks_cluster_name }}"
           if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" == "devops-final-eks" ]; then
@@ -522,7 +524,25 @@ jobs:
             CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?starts_with(@, 'devops-final-') && ends_with(@, '-eks')] | [0]" --output text)
           fi
           echo "Using EKS Cluster: $CLUSTER_NAME"
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
+          
+          # Retrieve Cluster Info
+          ENDPOINT=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text)
+          CA_DATA=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query "cluster.certificateAuthority.data" --output text)
+          
+          # Generate Token
+          TOKEN=$(aws eks get-token --cluster-name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --output json | jq -r '.status.token')
+          
+          # Configure Kubectl
+          echo $CA_DATA | base64 -d > ca.crt
+          kubectl config set-cluster $CLUSTER_NAME --server=$ENDPOINT --certificate-authority=ca.crt --embed-certs=true
+          kubectl config set-credentials deploy-user --token=$TOKEN
+          kubectl config set-context $CLUSTER_NAME --cluster=$CLUSTER_NAME --user=deploy-user
+          kubectl config use-context $CLUSTER_NAME
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.29.2'
 
       - name: Set up Python
         uses: actions/setup-python@v5
