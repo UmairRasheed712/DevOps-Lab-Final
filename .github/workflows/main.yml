@@ -388,36 +388,29 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Manual Kubeconfig Setup
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Setup and Verify Kubeconfig
         run: |
+          echo "=== AWS Identity Info ==="
+          aws sts get-caller-identity
+          
+          echo "=== Discovering Cluster ==="
           CLUSTER_NAME="${{ needs.terraform-apply.outputs.eks_cluster_name }}"
           if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" == "devops-final-eks" ]; then
             echo "Cluster name from output is empty or default. Attempting to discover..."
             CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?starts_with(@, 'devops-final-') && ends_with(@, '-eks')] | [0]" --output text)
           fi
-          echo "Using EKS Cluster: $CLUSTER_NAME"
+          echo "Target Cluster: $CLUSTER_NAME"
           
-          # Retrieve Cluster Info
-          ENDPOINT=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text)
-          CA_DATA=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query "cluster.certificateAuthority.data" --output text)
+          echo "=== Updating Kubeconfig ==="
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
           
-          # Generate Token
-          TOKEN=$(aws eks get-token --cluster-name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --output json | jq -r '.status.token')
-          
-          # Configure Kubectl
-          echo $CA_DATA | base64 -d > ca.crt
-          kubectl config set-cluster $CLUSTER_NAME --server=$ENDPOINT --certificate-authority=ca.crt --embed-certs=true
-          kubectl config set-credentials deploy-user --token=$TOKEN
-          kubectl config set-context $CLUSTER_NAME --cluster=$CLUSTER_NAME --user=deploy-user
-          kubectl config use-context $CLUSTER_NAME
-
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'v1.29.2'
-
-      - name: Verify Cluster Access
-        run: |
+          echo "=== Verifying Access ==="
+          kubectl config view --minify
           kubectl get svc --all-namespaces
 
       - name: Create Kubernetes namespace
