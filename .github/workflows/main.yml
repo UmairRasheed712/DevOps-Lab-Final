@@ -428,12 +428,14 @@ jobs:
         run: |
           export IMAGE_TAG=${{ github.sha }}
           export ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          export POSTGRES_HOST=${{ needs.terraform-apply.outputs.rds_endpoint }}
+          envsubst < k8s/configmap.yaml > k8s/configmap-updated.yaml
           envsubst < k8s/api-deployment.yaml > k8s/api-deployment-updated.yaml
           # Frontend manifest update is deferred until we have the API URL
 
       - name: Deploy Backend & Monitoring
         run: |
-          kubectl apply -f k8s/configmap.yaml -n devops-final --validate=false
+          kubectl apply -f k8s/configmap-updated.yaml -n devops-final --validate=false
           kubectl apply -f k8s/postgres.yaml -n devops-final --validate=false
           kubectl apply -f k8s/redis.yaml -n devops-final --validate=false
           kubectl apply -f k8s/api-deployment-updated.yaml -n devops-final --validate=false
