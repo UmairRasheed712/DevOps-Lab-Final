@@ -453,24 +453,7 @@ jobs:
         continue-on-error: true
         run: |
           echo "Deployment applied - skipping rollout wait"
-          sleep 3
-          API_URL=""
-          for i in {1..30}; do
-            LB_HOSTNAME=$(kubectl get svc api-service -n devops-final -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-            if [ -n "$LB_HOSTNAME" ]; then
-              API_URL="http://$LB_HOSTNAME:5000/api"
-              break
-            fi
-            echo "Waiting for LoadBalancer..."
-            sleep 10
-          done
-          
-          if [ -z "$API_URL" ]; then
-            echo "Could not get LoadBalancer URL. Using ClusterIP (internal only)."
-            # Fallback for testing if LB fails
-            API_URL="http://api-service:5000/api"
-          fi
-          
+          API_URL="http://api:5000/api"
           echo "API_URL detected: $API_URL"
           echo "API_URL=$API_URL" >> $GITHUB_ENV
 
