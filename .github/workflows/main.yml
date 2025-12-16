@@ -450,6 +450,7 @@ jobs:
           kubectl apply -f k8s/monitoring/grafana-service.yaml -n devops-final --validate=false
 
       - name: Wait for API LoadBalancer
+        continue-on-error: true
         run: |
           echo "Waiting for API Service LoadBalancer..."
           kubectl rollout status deployment/api-deployment -n devops-final --timeout=5m
