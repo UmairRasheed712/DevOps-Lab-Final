@@ -396,16 +396,23 @@ jobs:
             CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?starts_with(@, 'devops-final-') && ends_with(@, '-eks')] | [0]" --output text)
           fi
           echo "Using EKS Cluster: $CLUSTER_NAME"
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --alias $CLUSTER_NAME
+          kubectl config use-context $CLUSTER_NAME
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'latest'
 
+      - name: Verify Cluster Access
+        run: |
+          aws sts get-caller-identity
+          kubectl config view --minify
+          kubectl get svc --all-namespaces
+
       - name: Create Kubernetes namespace
         run: |
-          kubectl create namespace devops-final || true
+          kubectl create namespace devops-final --dry-run=client -o yaml | kubectl apply --validate=false -f -
 
       - name: Create Kubernetes secrets
         run: |
