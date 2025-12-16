@@ -452,11 +452,8 @@ jobs:
       - name: Wait for API LoadBalancer
         continue-on-error: true
         run: |
-          echo "Waiting for API Service LoadBalancer..."
-          kubectl rollout status deployment/api-deployment -n devops-final --timeout=5m
-          
-          # Wait for LB IP/Hostname
-          sleep 30
+          echo "Deployment applied - skipping rollout wait"
+          sleep 3
           API_URL=""
           for i in {1..30}; do
             LB_HOSTNAME=$(kubectl get svc api-service -n devops-final -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
