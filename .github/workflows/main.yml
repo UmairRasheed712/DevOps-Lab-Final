@@ -402,12 +402,20 @@ jobs:
       - name: Install kubectl
         uses: azure/setup-kubectl@v3
         with:
-          version: 'latest'
+          version: 'v1.29.2' # Pin to match EKS version
+
+      - name: Check AWS CLI Version
+        run: aws --version
 
       - name: Verify Cluster Access
         run: |
+          echo "Verifying AWS Identity..."
           aws sts get-caller-identity
+          
+          echo "Verifying Kubeconfig..."
           kubectl config view --minify
+          
+          echo "Testing Cluster Access..."
           kubectl get svc --all-namespaces
 
       - name: Create Kubernetes namespace
