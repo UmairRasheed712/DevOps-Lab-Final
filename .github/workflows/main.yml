@@ -449,7 +449,7 @@ jobs:
   smoke-tests:
     name: Post-Deployment Smoke Tests
     runs-on: ubuntu-latest
-    needs: deploy-to-kubernetes
+    needs: [terraform-apply, deploy-to-kubernetes]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
@@ -466,7 +466,7 @@ jobs:
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
-            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --name ${{ needs.terraform-apply.outputs.eks_cluster_name }} \
             --region ${{ env.AWS_REGION }}
 
       - name: Set up Python
