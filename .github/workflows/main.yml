@@ -393,7 +393,7 @@ jobs:
         with:
           version: 'v1.29.2'
 
-      - name: Manual Kubeconfig Setup
+      - name: Update kubeconfig
         run: |
           echo "=== AWS Identity Info ==="
           aws sts get-caller-identity
@@ -406,28 +406,8 @@ jobs:
           fi
           echo "Target Cluster: $CLUSTER_NAME"
           
-          echo "=== Generating Auth Token ==="
-          # Ensure jq is installed
-          sudo apt-get update && sudo apt-get install -y jq
-          
-          TOKEN=$(aws eks get-token --cluster-name $CLUSTER_NAME --region ${{ env.AWS_REGION }} | jq -r '.status.token')
-          
-          if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
-            echo "::error::Failed to generate authentication token"
-            exit 1
-          fi
-          echo "Token generated successfully."
-          
-          echo "=== Configuring Kubectl ==="
-          ENDPOINT=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text)
-          CA_DATA=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query "cluster.certificateAuthority.data" --output text)
-          
-          echo $CA_DATA | base64 -d > ca.crt
-          
-          kubectl config set-cluster $CLUSTER_NAME --server=$ENDPOINT --certificate-authority=ca.crt --embed-certs=true
-          kubectl config set-credentials deploy-user --token=$TOKEN
-          kubectl config set-context $CLUSTER_NAME --cluster=$CLUSTER_NAME --user=deploy-user
-          kubectl config use-context $CLUSTER_NAME
+          echo "=== Updating Kubeconfig ==="
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
           
           echo "=== Verifying Access ==="
           kubectl get svc --all-namespaces

@@ -73,6 +73,10 @@ module "eks" {
   cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
   enable_irsa                          = true
 
+  # Ensure the creator (GitHub Actions user) has admin access
+  enable_cluster_creator_admin_permissions = true
+  authentication_mode                      = "API_AND_CONFIG_MAP"
+
   eks_managed_node_groups = {
     default = {
       instance_types = var.eks_node_instance_types
