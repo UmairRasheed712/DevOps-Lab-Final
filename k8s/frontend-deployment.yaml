@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ${ECR_REGISTRY}/devops-final-frontend:${IMAGE_TAG:-latest}
+          ports:
+            - containerPort: 80
+          env:
+            - name: API_URL
+              value: "http://REPLACE_WITH_API_LB_URL/api"
